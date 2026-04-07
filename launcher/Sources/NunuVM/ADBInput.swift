@@ -59,11 +59,29 @@ actor ADBInput {
 
     // MARK: - ADB runner
 
+    private static let adbPath: String = {
+        // Search common install locations; fall back to PATH lookup via /usr/bin/env
+        let candidates = [
+            "/usr/local/bin/adb",
+            "\(NSHomeDirectory())/Library/Android/sdk/platform-tools/adb",
+            "/opt/homebrew/bin/adb",
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+            ?? "/usr/bin/env"   // fallback: let env resolve it
+    }()
+
     private func runAdb(_ args: [String]) async {
-        let fullArgs = ["-s", adbAddress] + args
+        let (exe, fullArgs): (String, [String]) = {
+            let adb = Self.adbPath
+            let base = ["-s", adbAddress] + args
+            if adb == "/usr/bin/env" {
+                return (adb, ["adb"] + base)
+            }
+            return (adb, base)
+        }()
         _ = await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/adb")
+            proc.executableURL = URL(fileURLWithPath: exe)
             proc.arguments = fullArgs
             proc.standardOutput = FileHandle.nullDevice
             proc.standardError = FileHandle.nullDevice

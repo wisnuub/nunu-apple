@@ -17,6 +17,8 @@ struct Arguments {
     var displayHeight: Int = 1920
     var displayPPI: Int = 420
     var colorProfile: String = "default"  // default | vivid | cinema
+    var kernelCmdline: String = ""
+    var snapshotPath: String = ""
 
     var display: DisplayConfig {
         let cal: ColorCalibration
@@ -62,6 +64,10 @@ struct Arguments {
                 i += 1; if i < raw.count { args.displayPPI = Int(raw[i]) ?? 420 }
             case "--color-profile":
                 i += 1; if i < raw.count { args.colorProfile = raw[i] }
+            case "--cmdline":
+                i += 1; if i < raw.count { args.kernelCmdline = raw[i] }
+            case "--snapshot":
+                i += 1; if i < raw.count { args.snapshotPath = raw[i] }
             default:
                 break
             }

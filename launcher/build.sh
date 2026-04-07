@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# build.sh — builds and signs nunu-vm
+# build.sh — builds and signs nunu-vm as a macOS app bundle
+#
+# macOS 26 requires VZVirtualMachine to run inside an app bundle; a plain
+# CLI tool is rejected by the Virtualization XPC service.
+#
+# Output: NunuVM.app/  (in the launcher directory)
 #
 # Usage:
 #   ./build.sh                   # debug build, ad-hoc signed (local dev)
 #   ./build.sh --release         # release build, ad-hoc signed
 #   ./build.sh --release --sign  # release build, Developer ID signed (CI/dist)
 #
-# For --sign, set these env vars (GitHub Actions secrets):
-#   APPLE_SIGNING_IDENTITY  — e.g. "Developer ID Application: Name (TEAMID)"
-#   APPLE_TEAM_ID           — your 10-char Apple team ID
+# For --sign, set:
+#   APPLE_SIGNING_IDENTITY  — "Developer ID Application: Name (TEAMID)"
 #
-# Notarization (run after --sign):
-#   xcrun notarytool submit nunu-vm.zip \
-#     --apple-id "$APPLE_ID" \
-#     --password "$APPLE_APP_PASSWORD" \
-#     --team-id  "$APPLE_TEAM_ID" \
-#     --wait
+# Run the VM:
+#   NunuVM.app/Contents/MacOS/NunuVM --kernel ...
 
 set -euo pipefail
 
@@ -28,6 +28,8 @@ for arg in "$@"; do
         --sign)    SIGN=true    ;;
     esac
 done
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
@@ -48,44 +50,76 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 
+# ── Assemble app bundle ───────────────────────────────────────────────────────
+
+APP="$SCRIPT_DIR/NunuVM.app"
+MACOS="$APP/Contents/MacOS"
+
+rm -rf "$APP"
+mkdir -p "$MACOS"
+
+# Info.plist — LSUIElement so the app doesn't appear in the Dock
+cat > "$APP/Contents/Info.plist" << 'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.nunu.vm</string>
+    <key>CFBundleName</key>
+    <string>NunuVM</string>
+    <key>CFBundleDisplayName</key>
+    <string>NunuVM</string>
+    <key>CFBundleVersion</key>
+    <string>1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>NunuVM</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+
+cp "$BINARY" "$MACOS/NunuVM"
+
 # ── Sign ──────────────────────────────────────────────────────────────────────
 
-ENTITLEMENTS="$(dirname "$0")/NunuVM.entitlements"
+ENTITLEMENTS="$SCRIPT_DIR/NunuVM.entitlements"
 
 if [ "$SIGN" = true ]; then
-    # Developer ID — for distribution inside nunu.app
     IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
     if [ -z "$IDENTITY" ]; then
         echo "Error: APPLE_SIGNING_IDENTITY not set" >&2
         exit 1
     fi
     echo "Signing with Developer ID: $IDENTITY"
-    codesign \
-        --sign "$IDENTITY" \
-        --entitlements "$ENTITLEMENTS" \
-        --options runtime \
-        --timestamp \
-        --force \
-        "$BINARY"
+    # Sign inner binary first, then the bundle
+    codesign --sign "$IDENTITY" --options runtime --timestamp --force "$MACOS/NunuVM"
+    codesign --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" --options runtime --timestamp --force "$APP"
 else
-    # Ad-hoc — works locally without an Apple Developer account
     echo "Signing ad-hoc (local dev)..."
-    codesign \
-        --sign - \
-        --entitlements "$ENTITLEMENTS" \
-        --force \
-        "$BINARY"
+    codesign --sign - --force "$MACOS/NunuVM"
+    codesign --sign - --entitlements "$ENTITLEMENTS" --force "$APP"
 fi
 
 # ── Verify ────────────────────────────────────────────────────────────────────
 
 echo "Verifying signature..."
-codesign --verify --verbose "$BINARY"
+codesign --verify --verbose "$APP"
 
 echo ""
 echo "Checking entitlements..."
-codesign -d --entitlements - "$BINARY" 2>/dev/null | \
-    grep -E "virtualization|network" || true
+codesign -d --entitlements :- "$APP" 2>/dev/null | \
+    plutil -p - 2>/dev/null | grep -E "virtualization|network" || true
 
 echo ""
-echo "Done: $BINARY"
+echo "Done: $APP"
+echo "Run: $MACOS/NunuVM --kernel ..."

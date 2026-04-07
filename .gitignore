@@ -36,3 +36,6 @@ out/
 *.pem
 *.p12
 credentials/
+
+# Built app bundle
+launcher/NunuVM.app/

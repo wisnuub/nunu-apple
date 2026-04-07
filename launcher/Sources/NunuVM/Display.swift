@@ -95,11 +95,13 @@ class VMWindow: NSObject, NSWindowDelegate {
         view.addGestureRecognizer(swipe)
 
         win.contentView = view
-        win.makeKeyAndOrderFront(nil)
-
         self.window = win
         self.vmView = view
         self.cursorState = CursorState(window: win)
+
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+        win.orderFrontRegardless()
     }
 
     func requestFrame() {
