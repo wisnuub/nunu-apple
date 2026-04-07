@@ -94,6 +94,8 @@ class VMWindow: NSObject, NSWindowDelegate {
         view.addGestureRecognizer(swipe)
 
         win.contentView = view
+        win.acceptsMouseMovedEvents = true   // required for VZUSBScreenCoordinatePointingDevice
+        win.makeFirstResponder(view)
         self.window = win
         self.vmView = view
 
@@ -149,6 +151,9 @@ class VMWindow: NSObject, NSWindowDelegate {
 // coordinates, so the cursor acts as the "finger" — it must stay visible.
 class NunuVMView: VZVirtualMachineView {
     weak var vmWindow: VMWindow?
+
+    // Accept first-mouse so clicks register even when the window isn't already focused
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { return true }
 
     override func mouseDown(with event: NSEvent) {
         // Do NOT capture/hide cursor — absolute coordinate pointing device
