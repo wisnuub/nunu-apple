@@ -6,6 +6,7 @@ on:
     tags: ['v*']
     paths:
       - 'launcher/**'
+      - '.github/workflows/build-launcher.yml'
   pull_request:
     paths:
       - 'launcher/**'
@@ -25,46 +26,32 @@ jobs:
         working-directory: launcher
         run: swift build -c release
 
-      - name: Import signing certificate
-        if: >
-          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) &&
-          github.event_name == 'push' &&
-          secrets.APPLE_CERT_BASE64 != ''
+      - name: Sign binary
+        working-directory: launcher
         env:
           CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
           CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
-        run: |
-          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
-          security create-keychain -p "" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "" $KEYCHAIN_PATH
-          echo "$CERT_BASE64" | base64 --decode > $RUNNER_TEMP/cert.p12
-          security import $RUNNER_TEMP/cert.p12 \
-            -k $KEYCHAIN_PATH \
-            -P "$CERT_PASSWORD" \
-            -A -T /usr/bin/codesign
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          security set-key-partition-list \
-            -S apple-tool:,apple: -s -k "" $KEYCHAIN_PATH
-
-      - name: Sign (Developer ID)
-        if: >
-          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) &&
-          github.event_name == 'push' &&
-          secrets.APPLE_CERT_BASE64 != ''
-        working-directory: launcher
-        env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: ./build.sh --release --sign
-
-      - name: Sign (ad-hoc)
-        if: >
-          github.event_name == 'pull_request' ||
-          ((github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) &&
-           github.event_name == 'push' &&
-           secrets.APPLE_CERT_BASE64 == '')
-        working-directory: launcher
-        run: ./build.sh --release
+        run: |
+          if [ -n "$CERT_BASE64" ]; then
+            echo "Signing with Developer ID certificate..."
+            KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
+            security create-keychain -p "" $KEYCHAIN_PATH
+            security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+            security unlock-keychain -p "" $KEYCHAIN_PATH
+            echo "$CERT_BASE64" | base64 --decode > $RUNNER_TEMP/cert.p12
+            security import $RUNNER_TEMP/cert.p12 \
+              -k $KEYCHAIN_PATH \
+              -P "$CERT_PASSWORD" \
+              -A -T /usr/bin/codesign
+            security list-keychain -d user -s $KEYCHAIN_PATH
+            security set-key-partition-list \
+              -S apple-tool:,apple: -s -k "" $KEYCHAIN_PATH
+            ./build.sh --release --sign
+          else
+            echo "No signing certificate configured — using ad-hoc signature"
+            ./build.sh --release
+          fi
 
       - name: Verify entitlements
         working-directory: launcher
