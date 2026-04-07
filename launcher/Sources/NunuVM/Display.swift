@@ -57,7 +57,6 @@ func makeGraphicsDevice(display: DisplayConfig) -> VZVirtioGraphicsDeviceConfigu
 class VMWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var vmView: VZVirtualMachineView?
-    var cursorState: CursorState?
     private let displayConfig: DisplayConfig
 
     init(displayConfig: DisplayConfig) {
@@ -97,7 +96,6 @@ class VMWindow: NSObject, NSWindowDelegate {
         win.contentView = view
         self.window = win
         self.vmView = view
-        self.cursorState = CursorState(window: win)
 
         NSApp.activate(ignoringOtherApps: true)
         win.makeKeyAndOrderFront(nil)
@@ -141,32 +139,29 @@ class VMWindow: NSObject, NSWindowDelegate {
         recognizer.setTranslation(.zero, in: view)
     }
 
-    // MARK: - Cursor capture
-
-    // Click inside the VM view captures the cursor for gaming
-    func captureCursor() {
-        cursorState?.capture()
-    }
-
-    // NSWindowDelegate: release cursor when window loses focus
-    func windowDidResignKey(_ notification: Notification) {
-        cursorState?.release()
-    }
+    // NSWindowDelegate: placeholder for future window focus handling
+    func windowDidResignKey(_ notification: Notification) {}
 }
 
-// NunuVMView subclasses VZVirtualMachineView to intercept mouse clicks
-// for cursor capture and key events for the Cmd+Escape release shortcut
+// NunuVMView subclasses VZVirtualMachineView to intercept key events
+// and ensure a visible cursor (pointing hand) is shown over the VM surface.
+// VZUSBScreenCoordinatePointingDeviceConfiguration sends absolute touch
+// coordinates, so the cursor acts as the "finger" — it must stay visible.
 class NunuVMView: VZVirtualMachineView {
     weak var vmWindow: VMWindow?
 
     override func mouseDown(with event: NSEvent) {
-        vmWindow?.captureCursor()
+        // Do NOT capture/hide cursor — absolute coordinate pointing device
+        // uses cursor position as the touch point.
         super.mouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
-        if vmWindow?.cursorState?.handleKeyDown(event) == true { return }
         super.keyDown(with: event)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
     }
 }
 

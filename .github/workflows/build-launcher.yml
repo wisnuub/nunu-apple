@@ -3,6 +3,7 @@ name: Build Launcher
 on:
   push:
     branches: [main]
+    tags: ['v*']
     paths:
       - 'launcher/**'
   pull_request:
@@ -11,7 +12,7 @@ on:
 
 jobs:
   build:
-    name: Build nunu-vm
+    name: Build NunuVM
     runs-on: macos-14  # Apple Silicon runner
 
     steps:
@@ -25,7 +26,7 @@ jobs:
         run: swift build -c release
 
       - name: Import signing certificate
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.event_name == 'push'
         env:
           CERT_BASE64: ${{ secrets.APPLE_CERT_BASE64 }}
           CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -44,7 +45,7 @@ jobs:
             -S apple-tool:,apple: -s -k "" $KEYCHAIN_PATH
 
       - name: Sign (Developer ID)
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) && github.event_name == 'push'
         working-directory: launcher
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -67,3 +68,10 @@ jobs:
           name: nunu-vm-macos-arm64
           path: launcher/.build/release/NunuVM
           retention-days: 30
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: launcher/.build/release/NunuVM
+          generate_release_notes: true
