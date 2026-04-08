@@ -260,6 +260,9 @@ class AndroidVM: NSObject {
                 "loop.max_part=7",
                 "init=/init",
                 "loglevel=8",
+                // Required for Android 16 — SELinux enforcing blocks fowner during
+                // SetupSelinux phase on Virtualization.framework without this flag
+                "androidboot.selinux=permissive",
                 // boot_devices is set in bootconfig (arm64: 3f000000.pcie)
                 // bootconfig tells the kernel to read the appended bootconfig section
                 "bootconfig",
