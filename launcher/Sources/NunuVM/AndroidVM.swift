@@ -103,9 +103,21 @@ class AndroidVM: NSObject {
             self.vmWindow = window
             window.show(vm: machine)
 
+            // Tell the view the display dimensions so it can convert coordinates
+            window.setDisplaySize(width: display.widthPx, height: display.heightPx)
+
+            // Normal mode: tap and drag via ADB touchscreen input
+            window.setTapHandler { [weak self] x, y in
+                guard let input = self?.adbInput else { return }
+                Task { await input.tap(x: x, y: y) }
+            }
+            window.setDragHandler { [weak self] fromX, fromY, toX, toY in
+                guard let input = self?.adbInput else { return }
+                Task { await input.drag(fromX: fromX, fromY: fromY, toX: toX, toY: toY) }
+            }
+
             // FPS mode: accumulate mouse deltas into an absolute display position,
             // forwarded to Android via ADB input injection.
-            // Start at display centre so the first FPS session feels natural.
             self.fpsCursorX = Double(display.widthPx) / 2
             self.fpsCursorY = Double(display.heightPx) / 2
             window.setFPSDeltaHandler { [weak self] dx, dy in

@@ -116,6 +116,19 @@ class VMWindow: NSObject, NSWindowDelegate {
             : "nunu"
     }
 
+    func setDisplaySize(width: Int, height: Int) {
+        vmView?.displayWidth  = width
+        vmView?.displayHeight = height
+    }
+
+    func setTapHandler(_ handler: @escaping (_ x: Int, _ y: Int) -> Void) {
+        vmView?.onTap = handler
+    }
+
+    func setDragHandler(_ handler: @escaping (_ fromX: Int, _ fromY: Int, _ toX: Int, _ toY: Int) -> Void) {
+        vmView?.onDrag = handler
+    }
+
     // Wire up the FPS delta callback on the inner view.
     // Called by AndroidVM once ADB is ready.
     func setFPSDeltaHandler(_ handler: @escaping (_ dx: CGFloat, _ dy: CGFloat) -> Void) {
@@ -177,18 +190,40 @@ class NunuVMView: VZVirtualMachineView {
 
     private(set) var fpsModeEnabled = false
 
-    // Called by AndroidVM to wire up FPS delta → ADB
+    // ADB input callbacks — set by AndroidVM once ADB is ready
     var onFPSDelta: ((_ dx: CGFloat, _ dy: CGFloat) -> Void)?
+    var onTap:      ((_ x: Int, _ y: Int) -> Void)?
+    var onDrag:     ((_ fromX: Int, _ fromY: Int, _ toX: Int, _ toY: Int) -> Void)?
+
+    // Display dimensions for coordinate conversion (set by VMWindow.show)
+    var displayWidth:  Int = 1080
+    var displayHeight: Int = 1920
+
+    // Drag tracking
+    private var dragStart:   NSPoint?
+    private var dragCurrent: NSPoint?
 
     // Accept first-mouse so a click into an unfocused window registers immediately
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { return true }
+
+    // ── Coordinate conversion ────────────────────────────────────────────────
+
+    // Convert NSView point (origin bottom-left, points) → Android px (origin top-left)
+    private func toAndroid(_ p: NSPoint) -> (x: Int, y: Int) {
+        let normX = (p.x / bounds.width).clamped(to: 0...1)
+        let normY = (1.0 - p.y / bounds.height).clamped(to: 0...1)   // flip Y
+        return (
+            x: Int(normX * CGFloat(displayWidth)),
+            y: Int(normY * CGFloat(displayHeight))
+        )
+    }
 
     // ── FPS mode toggle ──────────────────────────────────────────────────────
 
     func enableFPSMode() {
         guard !fpsModeEnabled else { return }
         fpsModeEnabled = true
-        CGAssociateMouseAndMouseCursorPosition(0)   // decouple cursor from screen position
+        CGAssociateMouseAndMouseCursorPosition(0)
         NSCursor.hide()
         warpToCenter()
         vmWindow?.updateTitleForFPSMode(true)
@@ -205,36 +240,55 @@ class NunuVMView: VZVirtualMachineView {
     private func warpToCenter() {
         guard let win = window else { return }
         let center = win.convertPoint(toScreen: NSPoint(x: bounds.midX, y: bounds.midY))
-        // NSScreen uses bottom-left origin; CGWarpMouse uses top-left
         let screenH = NSScreen.main?.frame.height ?? 0
         CGWarpMouseCursorPosition(CGPoint(x: center.x, y: screenH - center.y))
+    }
+
+    // ── Cursor visibility ────────────────────────────────────────────────────
+    // VZVirtualMachineView hides the system cursor when the VM has focus.
+    // We counter this by forcing .arrow via a tracking area + cursorUpdate override.
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas { removeTrackingArea(area) }
+        let options: NSTrackingArea.Options = [
+            .cursorUpdate, .mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow
+        ]
+        addTrackingArea(NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil))
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if !fpsModeEnabled { NSCursor.arrow.set() }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if !fpsModeEnabled { NSCursor.arrow.set() }
     }
 
     // ── Key events ───────────────────────────────────────────────────────────
 
     override func keyDown(with event: NSEvent) {
-        // F8 (keyCode 100) toggles FPS mode
-        if event.keyCode == 100 {
+        if event.keyCode == 100 {        // F8 — toggle FPS mode
             fpsModeEnabled ? disableFPSMode() : enableFPSMode()
             return
         }
-        // Escape releases FPS mode; otherwise pass to VM
-        if event.keyCode == 53 && fpsModeEnabled {
+        if event.keyCode == 53 && fpsModeEnabled {  // Esc — release FPS mode
             disableFPSMode()
             return
         }
         super.keyDown(with: event)
     }
 
-    // ── Mouse events — FPS mode only ─────────────────────────────────────────
+    // ── Mouse events ─────────────────────────────────────────────────────────
+    // Normal mode: clicks and drags are forwarded to Android via ADB tap/swipe.
+    // VZUSBScreenCoordinatePointingDevice is kept in the config for potential
+    // future use but Cuttlefish doesn't reliably recognise it as touch input.
+    // FPS mode: delta drives the ADB mouse-move position (camera look).
 
-    override func mouseMoved(with event: NSEvent) {
-        if fpsModeEnabled {
-            onFPSDelta?(event.deltaX, event.deltaY)
-            warpToCenter()
-            return   // do NOT call super — prevent VZ sending locked-centre coordinates
-        }
-        super.mouseMoved(with: event)
+    override func mouseDown(with event: NSEvent) {
+        if fpsModeEnabled { return }
+        dragStart   = convert(event.locationInWindow, from: nil)
+        dragCurrent = dragStart
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -243,15 +297,35 @@ class NunuVMView: VZVirtualMachineView {
             warpToCenter()
             return
         }
-        super.mouseDragged(with: event)
+        dragCurrent = convert(event.locationInWindow, from: nil)
     }
 
-    // ── Cursor rect (normal mode) ─────────────────────────────────────────────
+    override func mouseUp(with event: NSEvent) {
+        if fpsModeEnabled { return }
+        guard let start = dragStart else { return }
+        let end = dragCurrent ?? start
+        dragStart = nil; dragCurrent = nil
 
-    override func resetCursorRects() {
-        if !fpsModeEnabled {
-            addCursorRect(bounds, cursor: .arrow)
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let dist = sqrt(dx*dx + dy*dy)
+
+        let (sx, sy) = toAndroid(start)
+        if dist < 5 {
+            onTap?(sx, sy)
+        } else {
+            let (ex, ey) = toAndroid(end)
+            onDrag?(sx, sy, ex, ey)
         }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if fpsModeEnabled {
+            onFPSDelta?(event.deltaX, event.deltaY)
+            warpToCenter()
+            return
+        }
+        // Normal mode: keep cursor visible; no forwarding needed for hover
     }
 }
 

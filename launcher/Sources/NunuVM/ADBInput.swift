@@ -48,17 +48,29 @@ actor ADBInput {
         }
     }
 
+    // Tap at absolute position — simulates a finger touch (touchscreen source).
+    func tap(x: Int, y: Int) async {
+        await runAdb(["shell", "input", "touchscreen", "tap",
+            String(x.clamped(to: 0...(displayWidth - 1))),
+            String(y.clamped(to: 0...(displayHeight - 1)))])
+    }
+
+    // Drag from one point to another — simulates a finger swipe.
+    func drag(fromX: Int, fromY: Int, toX: Int, toY: Int, durationMs: Int = 200) async {
+        await runAdb(["shell", "input", "touchscreen", "swipe",
+            String(fromX.clamped(to: 0...(displayWidth - 1))),
+            String(fromY.clamped(to: 0...(displayHeight - 1))),
+            String(toX.clamped(to: 0...(displayWidth - 1))),
+            String(toY.clamped(to: 0...(displayHeight - 1))),
+            String(durationMs)])
+    }
+
     // Mouse move: sends absolute pointer position to Android.
     // Used for FPS mode — the caller accumulates deltas into an absolute position.
     func mouseMoveTo(x: Int, y: Int) async {
         await runAdb(["shell", "input", "mouse", "move",
             String(x.clamped(to: 0...(displayWidth - 1))),
             String(y.clamped(to: 0...(displayHeight - 1)))])
-    }
-
-    // Mouse click at absolute position (for FPS mode tap-to-shoot etc.)
-    func mouseClick(x: Int, y: Int) async {
-        await runAdb(["shell", "input", "mouse", "tap", String(x), String(y)])
     }
 
     // Scroll: simulates a single-finger swipe in the given direction
