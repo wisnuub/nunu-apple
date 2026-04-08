@@ -14,7 +14,7 @@ on:
 jobs:
   build:
     name: Build NunuVM
-    runs-on: macos-14  # Apple Silicon runner
+    runs-on: macos-15  # Apple Silicon, Xcode 16, macOS 15 SDK (required for VZUSBRelativePointerDeviceConfiguration)
     permissions:
       contents: write
 
