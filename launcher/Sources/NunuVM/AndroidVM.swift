@@ -260,9 +260,18 @@ class AndroidVM: NSObject {
                 "loop.max_part=7",
                 "init=/init",
                 "loglevel=8",
+                // Without this, init boots into recovery mode (loops on missing fstab)
+                "androidboot.force_normal_boot=1",
                 // Required for Android 16 — SELinux enforcing blocks fowner during
                 // SetupSelinux phase on Virtualization.framework without this flag
                 "androidboot.selinux=permissive",
+                // Cuttlefish hardware identifiers
+                "androidboot.hardware=cutf_cvm",
+                "androidboot.slot_suffix=_a",
+                "androidboot.verifiedbootstate=orange",
+                "androidboot.vbmeta.invalidate_on_error=no",
+                "androidboot.dynamic_partitions=true",
+                "androidboot.super_partition=super",
                 // boot_devices is set in bootconfig (arm64: 3f000000.pcie)
                 // bootconfig tells the kernel to read the appended bootconfig section
                 "bootconfig",
