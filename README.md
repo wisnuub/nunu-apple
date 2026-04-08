@@ -41,17 +41,43 @@ Swift package (`NunuVM`) that wraps `Virtualization.framework`:
 
 ```
 VZVirtualMachineConfiguration
-├── VZLinuxBootLoader            Android kernel + initrd
-├── VZVirtioBlockDevice          Cuttlefish disk images (super, userdata, frp…)
-├── VZVirtioNetworkDevice        NAT — ADB over vsock bridge
-├── VZVirtioGraphicsDevice       Display → Metal via VZVirtualMachineView
-├── VZUSBKeyboardConfiguration   Keyboard passthrough
-├── VZUSBScreenCoordinatePointing Absolute touch coordinates
-├── VZVirtioSocketDevice         vsock — ADB proxy on configurable port
-└── VZVirtioEntropyDevice        /dev/random
+├── VZLinuxBootLoader               Android kernel + initrd
+├── VZVirtioBlockDevice             Cuttlefish disk images (super, userdata, frp…)
+├── VZVirtioNetworkDevice           NAT — ADB over vsock bridge
+├── VZVirtioGraphicsDevice          Display → Metal via VZVirtualMachineView
+├── VZUSBKeyboardConfiguration      Keyboard passthrough
+├── VZUSBScreenCoordinatePointing   Absolute touch coordinates (normal mode)
+├── VZVirtioSocketDevice            vsock — ADB proxy on configurable port
+└── VZVirtioEntropyDevice           /dev/random
 ```
 
 Snapshot save/restore cuts cold boot (~130s) to ~5s resume.
+
+---
+
+## Input
+
+### Normal mode (default)
+
+Cursor moves freely between macOS windows. Clicks and drags inside the VM window are forwarded as absolute touch coordinates — exactly like BlueStacks / MeMu / GameLoop. No cursor locking.
+
+### FPS mode (press F8 to enter, F8 or Esc to release)
+
+For games that need mouse camera control (shooters, etc.):
+- Cursor is hidden and locked to the centre of the VM window
+- Mouse movement deltas are accumulated into an absolute position and sent to Android via `adb shell input mouse move X Y`
+- Window title updates to `nunu  ·  FPS mode  ·  F8 or Esc to release`
+
+### Gestures
+
+| macOS gesture | Android equivalent |
+|---|---|
+| Two-finger pinch | Pinch-to-zoom (via ADB multi-touch injection) |
+| Two-finger scroll | Scroll / swipe |
+
+### Window resize
+
+The window is constrained to the display aspect ratio when dragging the border — no black bars.
 
 ---
 
@@ -88,9 +114,9 @@ NunuVM \
   --memory   8192 \
   --cores    8 \
   --adb-port 5554 \
-  --display-width  1920 \
-  --display-height 1080 \
-  --display-ppi    240 \
+  --display-width  1080 \
+  --display-height 1920 \
+  --display-ppi    420 \
   --snapshot /path/to/snapshot.vmsave \
   --cmdline  "console=hvc0 androidboot.hardware=cutf_cvm ..."
 ```
@@ -112,14 +138,13 @@ JSON events are emitted on stdout:
 |---|---|
 | `~/.nunu/engines/nunu-apple/NunuVM` | Engine binary |
 | `~/.nunu/engines/nunu-apple/version.txt` | Installed version |
-
-Android disk images are managed separately by the nunu launcher.
+| `~/.nunu/cuttlefish/` | Cuttlefish disk images (managed by nunu launcher) |
 
 ---
 
 ## Releases
 
-Each tagged release (`v*`) on this repo publishes a signed `NunuVM` binary as a GitHub release asset. The nunu launcher fetches from `wisnuub/nunu-apple/releases` to install and update the engine automatically.
+Each tagged release (`v*`) on this repo publishes a signed `NunuVM.app.zip` as a GitHub release asset. The nunu launcher fetches from `wisnuub/nunu-apple/releases` to install and update the engine automatically.
 
 ---
 
