@@ -75,7 +75,7 @@ class VMWindow: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        win.title = "nunu"
+        win.title = "nunu  ·  Click to capture mouse  ·  Ctrl+Option to release"
         win.center()
         win.isReleasedWhenClosed = false
         win.delegate = self
@@ -145,28 +145,18 @@ class VMWindow: NSObject, NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {}
 }
 
-// NunuVMView subclasses VZVirtualMachineView to intercept key events
-// and ensure a visible cursor (pointing hand) is shown over the VM surface.
-// VZUSBScreenCoordinatePointingDeviceConfiguration sends absolute touch
-// coordinates, so the cursor acts as the "finger" — it must stay visible.
+// NunuVMView subclasses VZVirtualMachineView.
+// With VZUSBRelativePointerDeviceConfiguration, VZVirtualMachineView handles
+// cursor capture automatically: click inside to capture, Ctrl+Option to release.
+// Android will show its own pointer cursor once captured.
 class NunuVMView: VZVirtualMachineView {
     weak var vmWindow: VMWindow?
 
-    // Accept first-mouse so clicks register even when the window isn't already focused
+    // Accept first-mouse so a click into an unfocused window captures immediately
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { return true }
-
-    override func mouseDown(with event: NSEvent) {
-        // Do NOT capture/hide cursor — absolute coordinate pointing device
-        // uses cursor position as the touch point.
-        super.mouseDown(with: event)
-    }
 
     override func keyDown(with event: NSEvent) {
         super.keyDown(with: event)
-    }
-
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .pointingHand)
     }
 }
 

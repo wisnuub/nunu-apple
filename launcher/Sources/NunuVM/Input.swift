@@ -6,11 +6,11 @@ func makeKeyboards() -> [VZKeyboardConfiguration] {
     [VZUSBKeyboardConfiguration()]
 }
 
-// Pointing device — absolute screen coordinates (macOS 13+).
-// Android's input stack sees this as TYPE_TOUCHSCREEN events,
-// which is what games expect (not relative mouse movement).
+// Pointing device — relative mouse (like a USB mouse plugged into a phone).
+// Android sees this as a pointer/mouse device and shows an arrow cursor on screen.
+// VZVirtualMachineView captures the macOS cursor on click; release with Ctrl+Option.
 func makePointingDevices() -> [VZPointingDeviceConfiguration] {
-    [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+    [VZUSBRelativePointerDeviceConfiguration()]
 }
 
 // TouchCoordinateConverter maps a macOS view point (origin bottom-left, points)
