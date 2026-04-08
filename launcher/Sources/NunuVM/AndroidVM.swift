@@ -17,6 +17,10 @@ class AndroidVM: NSObject {
     private var adbInput: ADBInput?
     private var gestureObservers: [NSObjectProtocol] = []
 
+    // Accumulated FPS-mode cursor position (display pixels, origin top-left)
+    @MainActor private var fpsCursorX: Double = 0
+    @MainActor private var fpsCursorY: Double = 0
+
     @MainActor
     func start() async throws {
         // Apply all host-side performance optimisations before the VM starts
@@ -98,6 +102,21 @@ class AndroidVM: NSObject {
             let window = VMWindow(displayConfig: display)
             self.vmWindow = window
             window.show(vm: machine)
+
+            // FPS mode: accumulate mouse deltas into an absolute display position,
+            // forwarded to Android via ADB input injection.
+            // Start at display centre so the first FPS session feels natural.
+            self.fpsCursorX = Double(display.widthPx) / 2
+            self.fpsCursorY = Double(display.heightPx) / 2
+            window.setFPSDeltaHandler { [weak self] dx, dy in
+                guard let self, let input = self.adbInput else { return }
+                self.fpsCursorX = (self.fpsCursorX + Double(dx))
+                    .clamped(to: 0...Double(display.widthPx - 1))
+                self.fpsCursorY = (self.fpsCursorY + Double(dy))
+                    .clamped(to: 0...Double(display.heightPx - 1))
+                let x = Int(self.fpsCursorX); let y = Int(self.fpsCursorY)
+                Task { await input.mouseMoveTo(x: x, y: y) }
+            }
 
             // Start CVDisplayLink-driven frame pacing once window is visible
             let pacer = FramePacer()

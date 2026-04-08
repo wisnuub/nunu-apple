@@ -48,6 +48,19 @@ actor ADBInput {
         }
     }
 
+    // Mouse move: sends absolute pointer position to Android.
+    // Used for FPS mode — the caller accumulates deltas into an absolute position.
+    func mouseMoveTo(x: Int, y: Int) async {
+        await runAdb(["shell", "input", "mouse", "move",
+            String(x.clamped(to: 0...(displayWidth - 1))),
+            String(y.clamped(to: 0...(displayHeight - 1)))])
+    }
+
+    // Mouse click at absolute position (for FPS mode tap-to-shoot etc.)
+    func mouseClick(x: Int, y: Int) async {
+        await runAdb(["shell", "input", "mouse", "tap", String(x), String(y)])
+    }
+
     // Scroll: simulates a single-finger swipe in the given direction
     func scroll(fromX: Int, fromY: Int, dx: Double, dy: Double) async {
         let toX = (fromX + Int(dx)).clamped(to: 0...(displayWidth - 1))

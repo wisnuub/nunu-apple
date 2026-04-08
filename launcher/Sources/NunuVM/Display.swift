@@ -56,7 +56,7 @@ func makeGraphicsDevice(display: DisplayConfig) -> VZVirtioGraphicsDeviceConfigu
 @MainActor
 class VMWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
-    private var vmView: VZVirtualMachineView?
+    private var vmView: NunuVMView?
     private let displayConfig: DisplayConfig
 
     init(displayConfig: DisplayConfig) {
@@ -79,6 +79,8 @@ class VMWindow: NSObject, NSWindowDelegate {
         win.center()
         win.isReleasedWhenClosed = false
         win.delegate = self
+        // Lock resize to the display aspect ratio — no black bars when dragging the border
+        win.contentAspectRatio = NSSize(width: displayConfig.widthPx, height: displayConfig.heightPx)
 
         let view = NunuVMView()
         view.vmWindow = self
@@ -106,6 +108,18 @@ class VMWindow: NSObject, NSWindowDelegate {
 
     func requestFrame() {
         vmView?.needsDisplay = true
+    }
+
+    func updateTitleForFPSMode(_ enabled: Bool) {
+        window?.title = enabled
+            ? "nunu  ·  FPS mode  ·  F8 or Esc to release"
+            : "nunu"
+    }
+
+    // Wire up the FPS delta callback on the inner view.
+    // Called by AndroidVM once ADB is ready.
+    func setFPSDeltaHandler(_ handler: @escaping (_ dx: CGFloat, _ dy: CGFloat) -> Void) {
+        vmView?.onFPSDelta = handler
     }
 
     // MARK: - Gestures
@@ -146,21 +160,98 @@ class VMWindow: NSObject, NSWindowDelegate {
 }
 
 // NunuVMView subclasses VZVirtualMachineView to intercept input events.
-// Uses VZUSBScreenCoordinatePointingDeviceConfiguration (absolute coordinates).
-// The macOS cursor position is forwarded directly as the touch/pointer position.
+//
+// Normal mode (default):
+//   Cursor moves freely between macOS windows. Clicks and drags inside the
+//   VM window are forwarded as absolute touch coordinates — exactly like
+//   BlueStacks / MeMu / GameLoop. No cursor locking.
+//
+// FPS mode (press F8 to toggle):
+//   Cursor is locked to the centre of the VM window. macOS mouse deltas are
+//   accumulated into a virtual absolute position and sent to Android via ADB
+//   input injection. This gives FPS games a camera-control input. Press F8
+//   or Escape to release.
+@MainActor
 class NunuVMView: VZVirtualMachineView {
     weak var vmWindow: VMWindow?
+
+    private(set) var fpsModeEnabled = false
+
+    // Called by AndroidVM to wire up FPS delta → ADB
+    var onFPSDelta: ((_ dx: CGFloat, _ dy: CGFloat) -> Void)?
 
     // Accept first-mouse so a click into an unfocused window registers immediately
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { return true }
 
+    // ── FPS mode toggle ──────────────────────────────────────────────────────
+
+    func enableFPSMode() {
+        guard !fpsModeEnabled else { return }
+        fpsModeEnabled = true
+        CGAssociateMouseAndMouseCursorPosition(0)   // decouple cursor from screen position
+        NSCursor.hide()
+        warpToCenter()
+        vmWindow?.updateTitleForFPSMode(true)
+    }
+
+    func disableFPSMode() {
+        guard fpsModeEnabled else { return }
+        fpsModeEnabled = false
+        CGAssociateMouseAndMouseCursorPosition(1)
+        NSCursor.unhide()
+        vmWindow?.updateTitleForFPSMode(false)
+    }
+
+    private func warpToCenter() {
+        guard let win = window else { return }
+        let center = win.convertPoint(toScreen: NSPoint(x: bounds.midX, y: bounds.midY))
+        // NSScreen uses bottom-left origin; CGWarpMouse uses top-left
+        let screenH = NSScreen.main?.frame.height ?? 0
+        CGWarpMouseCursorPosition(CGPoint(x: center.x, y: screenH - center.y))
+    }
+
+    // ── Key events ───────────────────────────────────────────────────────────
+
     override func keyDown(with event: NSEvent) {
+        // F8 (keyCode 100) toggles FPS mode
+        if event.keyCode == 100 {
+            fpsModeEnabled ? disableFPSMode() : enableFPSMode()
+            return
+        }
+        // Escape releases FPS mode; otherwise pass to VM
+        if event.keyCode == 53 && fpsModeEnabled {
+            disableFPSMode()
+            return
+        }
         super.keyDown(with: event)
     }
 
+    // ── Mouse events — FPS mode only ─────────────────────────────────────────
+
+    override func mouseMoved(with event: NSEvent) {
+        if fpsModeEnabled {
+            onFPSDelta?(event.deltaX, event.deltaY)
+            warpToCenter()
+            return   // do NOT call super — prevent VZ sending locked-centre coordinates
+        }
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if fpsModeEnabled {
+            onFPSDelta?(event.deltaX, event.deltaY)
+            warpToCenter()
+            return
+        }
+        super.mouseDragged(with: event)
+    }
+
+    // ── Cursor rect (normal mode) ─────────────────────────────────────────────
+
     override func resetCursorRects() {
-        // Show a pointer cursor so the user can see where they are clicking
-        addCursorRect(bounds, cursor: .arrow)
+        if !fpsModeEnabled {
+            addCursorRect(bounds, cursor: .arrow)
+        }
     }
 }
 
