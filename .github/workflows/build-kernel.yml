@@ -1,41 +1,171 @@
-name: Build Kernel
+name: Build Kernel (KernelSU + SUSFS)
 
+# Trigger: push a kernel tag (e.g. kernel-v1.0) or run manually.
+# Produces vmlinuz_full — drop it into ~/.nunu/cuttlefish/ to replace the stock Google kernel.
 on:
   push:
-    branches: [main]
-    paths:
-      - 'kernel/**'
-  workflow_dispatch:  # allow manual trigger
+    tags:
+      - 'kernel-v*'
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build Android kernel (ARM64)
-    runs-on: self-hosted  # Windows PC with WSL2 Ubuntu 22.04
-    # Set up self-hosted runner: github.com/wisnuub/nunu-kernel → Settings → Actions → Runners
+    name: Build Android 16 kernel (arm64, KernelSU + SUSFS)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Sync kernel source
+      # ── 1. Install build dependencies ─────────────────────────────────
+      - name: Install dependencies
         run: |
-          if [ ! -d android-kernel ]; then
-            mkdir android-kernel
-            cd android-kernel
-            repo init -u https://android.googlesource.com/kernel/manifest \
-                       -b common-android14-6.1 --depth=1
-          fi
-          cd android-kernel && repo sync -j$(nproc) --no-clone-bundle --current-branch
+          sudo apt-get update -q
+          sudo apt-get install -y -q \
+            git bc bison flex libssl-dev libelf-dev python3 \
+            python-is-python3 make gcc binutils pahole \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            libncurses-dev cpio kmod clang lld llvm
 
+      # ── 2. Shallow-clone Android 16 GKI kernel ─────────────────────────
+      - name: Clone kernel/common (android16-6.12)
+        run: |
+          git clone --depth=1 \
+            https://android.googlesource.com/kernel/common \
+            -b android16-6.12 \
+            kernel/common
+          echo "Kernel commit: $(git -C kernel/common log --oneline -1)"
+
+      # ── 3. Apply KernelSU ──────────────────────────────────────────────
+      - name: Apply KernelSU
+        working-directory: kernel/common
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+          echo "KernelSU version: $(cat KernelSU/VERSION 2>/dev/null || echo unknown)"
+
+      # ── 4. Apply SUSFS patches ─────────────────────────────────────────
+      - name: Apply SUSFS
+        working-directory: kernel/common
+        run: |
+          git clone --depth=1 https://github.com/simonpunk/susfs4ksu ../susfs4ksu
+          PDIR="../susfs4ksu/kernel_patches"
+
+          # Apply patches (try 6.12-specific first, then generic)
+          for dir in "${PDIR}/6.12" "${PDIR}/6.x" "${PDIR}"; do
+            if ls "${dir}"/*.patch &>/dev/null 2>&1; then
+              echo "Applying patches from ${dir}"
+              for p in "${dir}"/*.patch; do
+                patch -p1 --forward < "$p" \
+                  && echo "  OK: $(basename $p)" \
+                  || echo "  SKIP: $(basename $p) (already applied or conflict)"
+              done
+              break
+            fi
+          done
+
+          # Copy SUSFS source files into the kernel
+          [ -d "../susfs4ksu/kernel_patches/fs" ] \
+            && cp -r ../susfs4ksu/kernel_patches/fs/* fs/
+          [ -d "../susfs4ksu/kernel_patches/include" ] \
+            && cp -r ../susfs4ksu/kernel_patches/include/* include/
+
+          echo "SUSFS applied"
+
+      # ── 5. Configure kernel ────────────────────────────────────────────
+      - name: Configure kernel
+        working-directory: kernel/common
+        run: |
+          # GKI base config (Android 16, arm64)
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+               CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+               gki_defconfig
+
+          # KernelSU
+          scripts/config --enable  CONFIG_KSU
+          scripts/config --enable  CONFIG_KSU_DEBUG
+          scripts/config --disable CONFIG_KSU_LKM  # built-in, not LKM
+
+          # SUSFS
+          scripts/config --enable CONFIG_KSU_SUSFS
+          scripts/config --enable CONFIG_KSU_SUSFS_SUS_PATH
+          scripts/config --enable CONFIG_KSU_SUSFS_SUS_MOUNT
+          scripts/config --enable CONFIG_KSU_SUSFS_SUS_KSTAT
+          scripts/config --enable CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+          scripts/config --enable CONFIG_KSU_SUSFS_TRY_UMOUNT
+          scripts/config --enable CONFIG_KSU_SUSFS_SPOOF_UNAME
+          scripts/config --enable CONFIG_KSU_SUSFS_ENABLE_LOG
+          scripts/config --enable CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          scripts/config --enable CONFIG_KSU_SUSFS_SUS_SU
+
+          # Cuttlefish / Apple VZ requirements
+          scripts/config --enable CONFIG_VIRTIO
+          scripts/config --enable CONFIG_VIRTIO_PCI
+          scripts/config --enable CONFIG_VIRTIO_BALLOON
+          scripts/config --enable CONFIG_VIRTIO_BLK
+          scripts/config --enable CONFIG_VIRTIO_NET
+          scripts/config --enable CONFIG_VIRTIO_CONSOLE
+          scripts/config --enable CONFIG_DRM_VIRTIO_GPU
+          scripts/config --enable CONFIG_VSOCKETS
+          scripts/config --enable CONFIG_VIRTIO_VSOCKETS
+          scripts/config --enable CONFIG_BINDER_IPC
+          scripts/config --enable CONFIG_ANDROID_BINDER_IPC
+          scripts/config --enable CONFIG_MODULES
+          scripts/config --enable CONFIG_MODULE_UNLOAD
+          scripts/config --enable CONFIG_KPROBES
+
+          # Finalise (accept all new options as default)
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+               CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+               olddefconfig
+
+      # ── 6. Build kernel ────────────────────────────────────────────────
       - name: Build kernel
+        working-directory: kernel/common
         run: |
-          cd android-kernel
-          tools/bazel build //common:kernel_aarch64 \
-            --config=fast \
-            --kconfig_ext=$GITHUB_WORKSPACE/kernel/gaming_defconfig
+          make -j$(nproc) \
+            ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 \
+            Image Image.gz
 
-      - name: Upload kernel image
+          ls -lh arch/arm64/boot/Image arch/arm64/boot/Image.gz
+
+      # ── 7. Package + capture version ──────────────────────────────────
+      - name: Package artifacts
+        run: |
+          mkdir -p dist
+          cp kernel/common/arch/arm64/boot/Image.gz dist/vmlinuz_full
+          strings dist/vmlinuz_full | grep -m1 "Linux version" > dist/kernel_version.txt || true
+          echo "--- kernel_version.txt ---"
+          cat dist/kernel_version.txt
+
+      # ── 8. Upload artifact (all runs) ──────────────────────────────────
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-arm64-gaming
-          path: android-kernel/bazel-bin/common/kernel_aarch64/Image.gz
-          retention-days: 90
+          name: nunu-kernel-${{ github.ref_name }}
+          path: dist/
+          retention-days: 30
+
+      # ── 9. Publish GitHub release (tag push only) ──────────────────────
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/vmlinuz_full
+            dist/kernel_version.txt
+          body: |
+            ## nunu-kernel ${{ github.ref_name }}
+
+            Android 16 GKI kernel (6.12) for Cuttlefish on Apple Silicon.
+
+            **Included:**
+            - KernelSU — root management (built-in, not LKM)
+            - SUSFS — filesystem-level root hiding from detection apps
+
+            **Install:**
+            1. Stop the VM in nunu
+            2. Replace `~/.nunu/cuttlefish/vmlinuz_full` with this file
+            3. Delete `~/.nunu/cuttlefish/snapshot.vmsave` (forces cold reboot)
+            4. Start the VM — KernelSU Manager app will appear
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
