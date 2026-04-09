@@ -96,7 +96,7 @@ class VMWindow: NSObject, NSWindowDelegate {
         view.addGestureRecognizer(swipe)
 
         win.contentView = view
-        win.acceptsMouseMovedEvents = true   // required for VZUSBScreenCoordinatePointingDevice
+        win.acceptsMouseMovedEvents = true   // required for mouseMoved events in NunuVMView
         win.makeFirstResponder(view)
         self.window = win
         self.vmView = view

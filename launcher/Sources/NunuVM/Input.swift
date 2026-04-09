@@ -6,11 +6,12 @@ func makeKeyboards() -> [VZKeyboardConfiguration] {
     [VZUSBKeyboardConfiguration()]
 }
 
-// Pointing device — absolute screen coordinates.
-// Android sees this as a digitizer/touchscreen device.
-// Mouse cursor overlay is handled via ADB input injection (see ADBInput).
+// No VZ pointing device — all pointer input goes through ADB injection
+// (tap, drag, scroll, FPS mouse move). Keeping a VZUSBScreenCoordinatePointing-
+// Device in the config causes the VZ framework to also forward raw cursor events
+// to the guest, which conflicts with the ADB touchscreen events we send.
 func makePointingDevices() -> [VZPointingDeviceConfiguration] {
-    [VZUSBScreenCoordinatePointingDeviceConfiguration()]
+    []
 }
 
 // TouchCoordinateConverter maps a macOS view point (origin bottom-left, points)
